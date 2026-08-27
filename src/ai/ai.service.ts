@@ -12,11 +12,9 @@ export class AiService {
   private readonly model: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.ollamaBaseUrl = this.configService.get<string>(
-      'OLLAMA_BASE_URL',
-      'http://127.0.0.1:11434',
-    );
-    this.model = this.configService.get<string>('OLLAMA_MODEL', 'llama3.2:3b');
+    this.ollamaBaseUrl =
+      this.configService.getOrThrow<string>('OLLAMA_BASE_URL');
+    this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
   }
 
   async generate(prompt: string): Promise<string> {
