@@ -4,12 +4,20 @@ import {
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class AiService {
-  private readonly ollamaBaseUrl =
-    process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434';
-  private readonly model = process.env.OLLAMA_MODEL ?? 'llama3.2:3b';
+  private readonly ollamaBaseUrl: string;
+  private readonly model: string;
+
+  constructor(private readonly configService: ConfigService) {
+    this.ollamaBaseUrl = this.configService.get<string>(
+      'OLLAMA_BASE_URL',
+      'http://127.0.0.1:11434',
+    );
+    this.model = this.configService.get<string>('OLLAMA_MODEL', 'llama3.2:3b');
+  }
 
   async generate(prompt: string): Promise<string> {
     const cleanPrompt = prompt?.trim();
