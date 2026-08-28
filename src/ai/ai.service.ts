@@ -5,6 +5,14 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  buildFewShotClassificationPrompt,
+  buildOneShotClassificationPrompt,
+  buildZeroShotClassificationPrompt,
+} from './prompts/classification.prompt';
+import { buildInvoiceSummaryPrompt } from './prompts/invoice-summary.prompt';
+import { buildSupportAgentPrompt } from './prompts/support.prompt';
+import { ClassificationExample, InvoiceData } from './prompts/prompt.types';
 
 @Injectable()
 export class AiService {
@@ -56,5 +64,31 @@ export class AiService {
     }
 
     return data.response.trim();
+  }
+
+  async classifyZeroShot(message: string): Promise<string> {
+    return this.generate(buildZeroShotClassificationPrompt(message));
+  }
+
+  async classifyOneShot(
+    message: string,
+    example: ClassificationExample,
+  ): Promise<string> {
+    return this.generate(buildOneShotClassificationPrompt(message, example));
+  }
+
+  async classifyFewShot(
+    message: string,
+    examples: ClassificationExample[],
+  ): Promise<string> {
+    return this.generate(buildFewShotClassificationPrompt(message, examples));
+  }
+
+  async createSupportReply(customerMessage: string): Promise<string> {
+    return this.generate(buildSupportAgentPrompt(customerMessage));
+  }
+
+  async summarizeInvoice(invoice: InvoiceData): Promise<string> {
+    return this.generate(buildInvoiceSummaryPrompt(invoice));
   }
 }
