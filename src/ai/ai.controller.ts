@@ -5,6 +5,11 @@ import type {
   ClassificationExample,
   InvoiceData,
 } from './prompts/prompt.types';
+import type { z } from 'zod';
+import type {
+  FraudAssessmentSchema,
+  InvoiceExtractionSchema,
+} from './structured-output';
 
 @Controller('ai')
 export class AiController {
@@ -55,5 +60,19 @@ export class AiController {
     @Body() invoice: InvoiceData,
   ): Promise<{ answer: string }> {
     return { answer: await this.aiService.summarizeInvoice(invoice) };
+  }
+
+  @Post('structured/invoice')
+  async structuredInvoice(
+    @Body('text') text: string,
+  ): Promise<z.infer<typeof InvoiceExtractionSchema>> {
+    return this.aiService.extractInvoiceFromText(text);
+  }
+
+  @Post('structured/fraud')
+  async structuredFraud(
+    @Body('invoiceText') invoiceText: string,
+  ): Promise<z.infer<typeof FraudAssessmentSchema>> {
+    return this.aiService.assessFraud(invoiceText);
   }
 }
