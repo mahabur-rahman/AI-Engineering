@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { z } from 'zod';
 import {
   buildFewShotClassificationPrompt,
   buildOneShotClassificationPrompt,
@@ -13,6 +14,12 @@ import {
 import { buildInvoiceSummaryPrompt } from './prompts/invoice-summary.prompt';
 import { buildSupportAgentPrompt } from './prompts/support.prompt';
 import { ClassificationExample, InvoiceData } from './prompts/prompt.types';
+import {
+  FraudAssessmentSchema,
+  InvoiceExtractionSchema,
+  parseFraudAssessment,
+  parseInvoiceExtraction,
+} from './structured-output';
 
 @Injectable()
 export class AiService {
@@ -90,5 +97,72 @@ export class AiService {
 
   async summarizeInvoice(invoice: InvoiceData): Promise<string> {
     return this.generate(buildInvoiceSummaryPrompt(invoice));
+  }
+
+  async extractInvoiceFromText(text: string): Promise<z.infer<typeof InvoiceExtractionSchema>> {
+    const cleanText = text?.trim();
+
+    if (!cleanText) {
+      throw new BadRequestException('text is required');
+    }
+
+    const prompt = `
+      You extract invoice data carefully.
+
+      Extract only the invoice fields from the input.
+
+      Do not invent missing values.
+      Return only valid JSON.
+
+      <invoice_data>
+      ${cleanText}
+      </invoice_data>
+
+      Required fields: invoiceId, customer, amount, dueDate, status.
+      Allowed status values: draft, sent, paid, overdue, cancelled.
+    `;
+
+    const raw = await this.generate(prompt);
+    const parsed = parseInvoiceExtraction(raw);
+
+    if (!parsed) {
+      throw new BadGatewayException(
+        'Model returned malformed or invalid invoice JSON.',
+      );
+    }
+
+    return parsed;
+  }
+
+  async assessFraud(invoiceText: string): Promise<z.infer<typeof FraudAssessmentSchema>> {
+    const cleanText = invoiceText?.trim();
+
+    if (!cleanText) {
+      throw new BadRequestException('invoiceText is required');
+    }
+
+    const prompt = `
+      You assess invoice fraud risk carefully.
+
+      Analyze only the provided invoice text.
+      Return only valid JSON with keys: isFraud, riskScore, reason.
+      isFraud must be boolean.
+      riskScore must be an integer between 0 and 100.
+
+      <invoice_text>
+      ${cleanText}
+      </invoice_text>
+    `;
+
+    const raw = await this.generate(prompt);
+    const parsed = parseFraudAssessment(raw);
+
+    if (!parsed) {
+      throw new BadGatewayException(
+        'Model returned malformed or invalid fraud JSON.',
+      );
+    }
+
+    return parsed;
   }
 }
