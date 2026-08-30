@@ -1,4 +1,11 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Res,
+  StreamableFile,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { AiService } from './ai.service';
 import { GenerateRequestDto } from './dto/generate-request.dto';
 import type {
@@ -74,5 +81,15 @@ export class AiController {
     @Body('invoiceText') invoiceText: string,
   ): Promise<z.infer<typeof FraudAssessmentSchema>> {
     return this.aiService.assessFraud(invoiceText);
+  }
+
+  @Post('stream')
+  async stream(
+    @Body('prompt') prompt: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const text = await this.aiService.streamPrompt(prompt);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return new StreamableFile(Buffer.from(text));
   }
 }
