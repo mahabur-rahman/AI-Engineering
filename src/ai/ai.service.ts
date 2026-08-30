@@ -20,6 +20,7 @@ import {
   parseFraudAssessment,
   parseInvoiceExtraction,
 } from './structured-output';
+import { parseNdjsonBuffer } from './streaming';
 
 @Injectable()
 export class AiService {
@@ -164,5 +165,66 @@ export class AiService {
     }
 
     return parsed;
+  }
+
+  async streamPrompt(prompt: string): Promise<string> {
+    const cleanPrompt = prompt?.trim();
+
+    if (!cleanPrompt) {
+      throw new BadRequestException('prompt is required');
+    }
+
+    const response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: cleanPrompt,
+        stream: true,
+      }),
+    }).catch(() => {
+      throw new ServiceUnavailableException('Unable to reach Ollama');
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new BadGatewayException(
+        `Ollama returned ${response.status}: ${errorText || response.statusText}`,
+      );
+    }
+
+    if (!response.body) {
+      throw new BadGatewayException('Ollama stream response body is missing');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullOutput = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const { lines, remaining } = parseNdjsonBuffer(buffer);
+      buffer = remaining;
+
+      for (const line of lines) {
+        if (typeof line.response === 'string') {
+          fullOutput += line.response;
+        }
+
+        if (line.done) {
+          return fullOutput;
+        }
+      }
+    }
+
+    return fullOutput;
   }
 }
