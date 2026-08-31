@@ -26,7 +26,13 @@ export class AiController {
   async generate(
     @Body() body: GenerateRequestDto,
   ): Promise<{ answer: string }> {
-    const answer = await this.aiService.generate(body.prompt);
+    const answer = await this.aiService.generate(body.prompt, {
+      temperature: body.temperature,
+      topP: body.topP,
+      topK: body.topK,
+      numPredict: body.numPredict,
+      stream: body.stream,
+    });
     return { answer };
   }
 

@@ -22,6 +22,14 @@ import {
 } from './structured-output';
 import { parseNdjsonBuffer } from './streaming';
 
+export type GenerateOptions = {
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  numPredict?: number;
+  stream?: boolean;
+};
+
 @Injectable()
 export class AiService {
   private readonly ollamaBaseUrl: string;
@@ -33,11 +41,36 @@ export class AiService {
     this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
   }
 
-  async generate(prompt: string): Promise<string> {
+  async generate(
+    prompt: string,
+    options: GenerateOptions = {},
+  ): Promise<string> {
     const cleanPrompt = prompt?.trim();
 
     if (!cleanPrompt) {
       throw new BadRequestException('prompt is required');
+    }
+
+    const body: Record<string, unknown> = {
+      model: this.model,
+      prompt: cleanPrompt,
+      stream: options.stream ?? false,
+    };
+
+    if (typeof options.temperature === 'number') {
+      body.temperature = options.temperature;
+    }
+
+    if (typeof options.topP === 'number') {
+      body.top_p = options.topP;
+    }
+
+    if (typeof options.topK === 'number') {
+      body.top_k = options.topK;
+    }
+
+    if (typeof options.numPredict === 'number') {
+      body.num_predict = options.numPredict;
     }
 
     const response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
@@ -45,11 +78,7 @@ export class AiService {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: cleanPrompt,
-        stream: false,
-      }),
+      body: JSON.stringify(body),
     }).catch(() => {
       throw new ServiceUnavailableException('Unable to reach Ollama');
     });
