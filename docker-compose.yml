@@ -1,0 +1,98 @@
+# Week 2 Day 2 - Docker Compose for PostgreSQL + pgvector
+# What: Runs PostgreSQL database with pgvector extension
+# Why: pgvector is a PostgreSQL extension for vector similarity search
+# How to use: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # =====================================================
+  # PostgreSQL with pgvector
+  # =====================================================
+  # 
+  # Image: pgvector/pgvector
+  # Why this image?
+  # - Includes PostgreSQL + pgvector extension pre-installed
+  # - Ready to use without manual compilation
+  # - Maintained by pgvector maintainers
+  #
+  # pgvector extension:
+  # - Adds vector data type to PostgreSQL
+  # - Provides similarity operations (cosine, L2, inner product)
+  # - Supports HNSW indexing for fast search
+  # - Allows us to store embeddings directly in relational DB
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ai-engineering-postgres
+    
+    environment:
+      # Root database credentials
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password  # Change in production!
+      POSTGRES_DB: ai_engineering
+    
+    ports:
+      # PostgreSQL port
+      # Format: HOST:CONTAINER
+      # Access from Node.js: localhost:5432
+      - "5432:5432"
+    
+    volumes:
+      # Persistent storage: data survives container restart
+      # postgres_data is a Docker named volume
+      # Location: /var/lib/docker/volumes/postgres_data/
+      - postgres_data:/var/lib/postgresql/data
+      
+      # Optional: initialization script
+      # If present, runs when container starts
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    
+    # Health check: ensures DB is ready before app tries to connect
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    
+    # Restart policy
+    restart: unless-stopped
+
+  # =====================================================
+  # pgAdmin (Optional: Web UI for PostgreSQL management)
+  # =====================================================
+  # 
+  # What: Web interface to manage PostgreSQL
+  # Why: Useful for debugging, viewing data, running queries
+  # Access: http://localhost:5050
+  # Login: admin@example.com / password
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: ai-engineering-pgadmin
+    
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: password
+    
+    ports:
+      - "5050:80"
+    
+    depends_on:
+      - postgres
+    
+    restart: unless-stopped
+
+# =====================================================
+# VOLUMES
+# =====================================================
+# 
+# postgres_data:
+# - Stores PostgreSQL data files
+# - Persists when container stops/restarts
+# - Survives docker-compose down
+# - Remove with: docker volume rm postgres_data (careful!)
+
+volumes:
+  postgres_data:
+    driver: local

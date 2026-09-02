@@ -1,0 +1,106 @@
+// This is your Prisma schema file for Week 2 Day 2: Vector Database Setup
+// What it does: Defines the database structure for storing document chunks and their embeddings
+// Why: Prisma gives us type-safe database access and migrations
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ===================================================
+// DOCUMENT_CHUNKS: Stores individual text chunks
+// ===================================================
+// Why this table?
+// - Documents are too large to embed as one
+// - We split them into chunks (e.g., 256-512 tokens)
+// - Each chunk gets its own embedding
+// - This allows precise retrieval without overwhelming context
+
+model DocumentChunk {
+  id String @id @default(cuid())
+  
+  // The actual text content of the chunk
+  // max size: ~2000 characters (typical chunk size)
+  content String @db.Text
+  
+  // High-dimensional numeric representation
+  // pgvector(768) matches nomic-embed-text embeddings
+  // This stores semantic meaning as numbers
+  // Why store this? For similarity search via cosine distance
+  embedding Unsupported("vector(768)")?
+  
+  // Metadata: helps with filtering and debugging
+  // Example: "document-abc", "page-5", "section-intro"
+  sourceDocumentId String
+  pageNumber Int?
+  chunkIndex Int? // which chunk # in the document
+  
+  // Timestamps for audit trail and freshness
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Index on sourceDocumentId for fast filtering
+  @@index([sourceDocumentId])
+}
+
+// ===================================================
+// DOCUMENTS: Parent document metadata
+// ===================================================
+// Why this table?
+// - Track which document each chunk came from
+// - Store source, language, version info
+// - Support bulk deletion when document is updated
+
+model Document {
+  id String @id @default(cuid())
+  
+  // Human-readable name
+  title String
+  
+  // Where did it come from? (URL, filepath, etc.)
+  source String?
+  
+  // For future: support language-specific embeddings
+  language String @default("en")
+  
+  // For versioning: if you update a doc, mark old version as replaced
+  isActive Boolean @default(true)
+  
+  // Metadata: any custom JSON data
+  metadata Json?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ===================================================
+// SEARCH_QUERIES: Log user searches (optional, for analytics)
+// ===================================================
+// Why this table?
+// - Debug which queries return good/bad results
+// - Track usage patterns
+// - Improve chunking/embedding strategy
+
+model SearchQuery {
+  id String @id @default(cuid())
+  
+  // The user's question
+  query String @db.Text
+  
+  // Embedding of the user query
+  queryEmbedding Unsupported("vector(768)")?
+  
+  // How many results did we return?
+  topK Int @default(5)
+  
+  // Did user find it useful? (optional feedback)
+  isRelevant Boolean?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([createdAt])
+}

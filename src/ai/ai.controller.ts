@@ -1,10 +1,22 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Res,
+  StreamableFile,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { AiService } from './ai.service';
 import { GenerateRequestDto } from './dto/generate-request.dto';
 import type {
   ClassificationExample,
   InvoiceData,
 } from './prompts/prompt.types';
+import type { z } from 'zod';
+import type {
+  FraudAssessmentSchema,
+  InvoiceExtractionSchema,
+} from './structured-output';
 
 @Controller('ai')
 export class AiController {
@@ -14,7 +26,13 @@ export class AiController {
   async generate(
     @Body() body: GenerateRequestDto,
   ): Promise<{ answer: string }> {
-    const answer = await this.aiService.generate(body.prompt);
+    const answer = await this.aiService.generate(body.prompt, {
+      temperature: body.temperature,
+      topP: body.topP,
+      topK: body.topK,
+      numPredict: body.numPredict,
+      stream: body.stream,
+    });
     return { answer };
   }
 
@@ -55,5 +73,29 @@ export class AiController {
     @Body() invoice: InvoiceData,
   ): Promise<{ answer: string }> {
     return { answer: await this.aiService.summarizeInvoice(invoice) };
+  }
+
+  @Post('structured/invoice')
+  async structuredInvoice(
+    @Body('text') text: string,
+  ): Promise<z.infer<typeof InvoiceExtractionSchema>> {
+    return this.aiService.extractInvoiceFromText(text);
+  }
+
+  @Post('structured/fraud')
+  async structuredFraud(
+    @Body('invoiceText') invoiceText: string,
+  ): Promise<z.infer<typeof FraudAssessmentSchema>> {
+    return this.aiService.assessFraud(invoiceText);
+  }
+
+  @Post('stream')
+  async stream(
+    @Body('prompt') prompt: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const text = await this.aiService.streamPrompt(prompt);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return new StreamableFile(Buffer.from(text));
   }
 }
