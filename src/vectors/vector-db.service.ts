@@ -77,7 +77,7 @@ export class VectorDbService {
     }
 
     // Check dimension match
-    const expectedDim = 1536; // Must match schema
+    const expectedDim = 768; // Must match vector(768) schema
     if (embedding.length !== expectedDim) {
       throw new BadRequestException(
         `Embedding dimension mismatch: got ${embedding.length}, expected ${expectedDim}`,
@@ -315,8 +315,12 @@ export class VectorDbService {
       `;
 
       return {
-        totalChunks: (chunkCount as Array<{ count: bigint }>)[0]?.count || 0,
-        totalDocuments: (docCount as Array<{ count: bigint }>)[0]?.count || 0,
+        totalChunks: Number(
+          (chunkCount as Array<{ count: bigint }>)[0]?.count || 0,
+        ),
+        totalDocuments: Number(
+          (docCount as Array<{ count: bigint }>)[0]?.count || 0,
+        ),
       };
     } catch (error) {
       throw new Error(

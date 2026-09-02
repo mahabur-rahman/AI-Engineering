@@ -28,10 +28,10 @@ model DocumentChunk {
   content String @db.Text
   
   // High-dimensional numeric representation
-  // pgvector(1536) means 1536-dimensional embedding
+  // pgvector(768) matches nomic-embed-text embeddings
   // This stores semantic meaning as numbers
   // Why store this? For similarity search via cosine distance
-  embedding Unsupported("vector(1536)")? 
+  embedding Unsupported("vector(768)")?
   
   // Metadata: helps with filtering and debugging
   // Example: "document-abc", "page-5", "section-intro"
@@ -92,7 +92,7 @@ model SearchQuery {
   query String @db.Text
   
   // Embedding of the user query
-  queryEmbedding Unsupported("vector(1536)")?
+  queryEmbedding Unsupported("vector(768)")?
   
   // How many results did we return?
   topK Int @default(5)

@@ -43,7 +43,7 @@ export interface BatchEmbeddingResponse {
 export class EmbeddingService {
   private readonly ollamaBaseUrl: string;
   private readonly embeddingModel: string;
-  private dimensions: number = 1536; // Default for many models
+  private dimensions: number = 768; // nomic-embed-text output dimension
 
   constructor(private readonly configService: ConfigService) {
     // Read from .env:
