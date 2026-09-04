@@ -10,6 +10,16 @@ export interface Chunk {
   endChar: number;
 }
 
+export function cleanDocumentText(text: string): string {
+  return text
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // =====================================================
 // CHUNKING STRATEGY 1: Fixed-size chunks with overlap
 // =====================================================
@@ -31,7 +41,7 @@ export function chunkDocumentFixedSize(
   chunkSize: number = 512, // characters per chunk
   overlap: number = 50, // overlap in characters
 ): Chunk[] {
-  if (!text || text.length === 0) {
+  if (!text || text.length === 0 || chunkSize <= 0 || overlap < 0 || overlap >= chunkSize) {
     return [];
   }
 
@@ -181,6 +191,7 @@ export interface ChunkValidationResult {
 
 export function validateChunks(chunks: Chunk[]): ChunkValidationResult {
   const issues: string[] = [];
+  const seen = new Set<string>();
 
   if (chunks.length === 0) {
     issues.push('No chunks generated');
@@ -194,9 +205,13 @@ export function validateChunks(chunks: Chunk[]): ChunkValidationResult {
       issues.push(`Chunk ${i}: too small (${chunk.content.length} chars)`);
     }
 
-    // Check for duplicate chunks
-    if (i > 0 && chunk.content === chunks[i - 1].content) {
-      issues.push(`Chunk ${i}: duplicate of previous chunk`);
+    if (seen.has(chunk.content)) {
+      issues.push(`Chunk ${i}: duplicate content`);
+    }
+    seen.add(chunk.content);
+
+    if (chunk.startChar < 0 || chunk.endChar <= chunk.startChar) {
+      issues.push(`Chunk ${i}: invalid character offsets`);
     }
 
     // Check for excessive whitespace
@@ -215,8 +230,13 @@ export function validateChunks(chunks: Chunk[]): ChunkValidationResult {
 // RECOMMENDED: Use this function for most documents
 // =====================================================
 export function smartChunkDocument(text: string): Chunk[] {
+  const cleanedText = cleanDocumentText(text);
+  if (!cleanedText) {
+    return [];
+  }
+
   // Step 1: Try semantic first (respects structure)
-  const semanticChunks = chunkDocumentSemantic(text);
+  const semanticChunks = chunkDocumentSemantic(cleanedText);
 
   // Step 2: Validate
   const validation = validateChunks(semanticChunks);
@@ -227,5 +247,5 @@ export function smartChunkDocument(text: string): Chunk[] {
 
   // Step 3: Fall back to fixed-size if semantic fails
   console.warn('Semantic chunking had issues, falling back to fixed-size');
-  return chunkDocumentFixedSize(text);
+  return chunkDocumentFixedSize(cleanedText);
 }

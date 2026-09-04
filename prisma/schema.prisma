@@ -38,6 +38,7 @@ model DocumentChunk {
   sourceDocumentId String
   pageNumber Int?
   chunkIndex Int? // which chunk # in the document
+  metadata Json?
   
   // Timestamps for audit trail and freshness
   createdAt DateTime @default(now())
