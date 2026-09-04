@@ -44,6 +44,8 @@ export class EmbeddingService {
   private readonly ollamaBaseUrl: string;
   private readonly embeddingModel: string;
   private dimensions: number = 768; // nomic-embed-text output dimension
+  private readonly requestTimeoutMs = 30_000;
+  private readonly maxAttempts = 3;
 
   constructor(private readonly configService: ConfigService) {
     // Read from .env:
@@ -81,50 +83,60 @@ export class EmbeddingService {
 
     const selectedModel = model || this.embeddingModel;
 
-    try {
-      // Step 1: Call Ollama embedding API
-      const response = await fetch(`${this.ollamaBaseUrl}/api/embeddings`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+      try {
+        const response = await fetch(`${this.ollamaBaseUrl}/api/embeddings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: selectedModel,
+            prompt: text,
+          }),
+          signal: AbortSignal.timeout(this.requestTimeoutMs),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new BadGatewayException(
+            `Ollama returned ${response.status}: ${errorText}`,
+          );
+        }
+
+        const data = (await response.json()) as {
+          embedding?: number[];
+        };
+
+        if (
+          !data.embedding ||
+          !Array.isArray(data.embedding) ||
+          data.embedding.length !== this.dimensions ||
+          !data.embedding.every((value) => Number.isFinite(value))
+        ) {
+          throw new BadGatewayException('Ollama did not return valid embedding');
+        }
+
+        return {
+          embedding: data.embedding,
           model: selectedModel,
-          prompt: text,
-        }),
-      });
+          dimensions: data.embedding.length,
+        };
+      } catch (error: unknown) {
+        if (error instanceof BadGatewayException || attempt === this.maxAttempts) {
+          if (error instanceof BadGatewayException) {
+            throw error;
+          }
+          throw new ServiceUnavailableException(
+            `Unable to reach Ollama embedding service: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
 
-      // Step 2: Error handling
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new BadGatewayException(
-          `Ollama returned ${response.status}: ${errorText}`,
-        );
+        await new Promise((resolve) => setTimeout(resolve, attempt * 250));
       }
-
-      // Step 3: Parse response
-      const data = (await response.json()) as {
-        embedding?: number[];
-      };
-
-      if (!data.embedding || !Array.isArray(data.embedding)) {
-        throw new BadGatewayException('Ollama did not return valid embedding');
-      }
-
-      // Step 4: Return structured result
-      return {
-        embedding: data.embedding,
-        model: selectedModel,
-        dimensions: data.embedding.length,
-      };
-    } catch (error: unknown) {
-      if (error instanceof BadGatewayException) {
-        throw error;
-      }
-      throw new ServiceUnavailableException(
-        `Unable to reach Ollama embedding service: ${error instanceof Error ? error.message : String(error)}`,
-      );
     }
+
+    throw new ServiceUnavailableException('Embedding generation failed');
   }
 
   // =====================================================

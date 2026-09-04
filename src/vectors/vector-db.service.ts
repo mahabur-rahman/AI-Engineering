@@ -17,6 +17,7 @@ export interface StoreChunkRequest {
   sourceDocumentId: string;
   pageNumber?: number;
   chunkIndex?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface StoreDocumentRequest {
@@ -27,6 +28,7 @@ export interface StoreDocumentRequest {
     embedding: number[];
     pageNumber?: number;
     chunkIndex?: number;
+    metadata?: Record<string, unknown>;
   }>;
 }
 
@@ -95,6 +97,7 @@ export class VectorDbService {
           "sourceDocumentId", 
           "pageNumber", 
           "chunkIndex", 
+          metadata,
           "createdAt",
           "updatedAt"
         )
@@ -105,6 +108,7 @@ export class VectorDbService {
           ${sourceDocumentId},
           ${pageNumber || null},
           ${chunkIndex || null},
+          ${request.metadata ? JSON.stringify(request.metadata) : null}::jsonb,
           NOW(),
           NOW()
         )
@@ -167,6 +171,7 @@ export class VectorDbService {
           sourceDocumentId: docId,
           pageNumber: chunk.pageNumber,
           chunkIndex: i,
+          metadata: chunk.metadata,
         });
       }
 

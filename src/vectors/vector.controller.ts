@@ -14,6 +14,7 @@ type EmbeddedChunk = {
   embedding: number[];
   pageNumber: number;
   chunkIndex: number;
+  metadata: Record<string, unknown>;
 };
 
 export class IngestDocumentRequest {
@@ -66,6 +67,12 @@ export class VectorController {
           embedding: result.embedding,
           pageNumber: chunk.index + 1,
           chunkIndex: chunk.index,
+          metadata: {
+            startChar: chunk.startChar,
+            endChar: chunk.endChar,
+            source: request.source ?? null,
+            embeddingModel: result.model,
+          },
         });
       }
 
