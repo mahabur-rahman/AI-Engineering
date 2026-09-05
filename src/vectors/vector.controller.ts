@@ -20,12 +20,15 @@ type EmbeddedChunk = {
 export class IngestDocumentRequest {
   title!: string;
   content!: string;
+  tenantId!: string;
   source?: string;
 }
 
 export class SemanticSearchRequest {
   query!: string;
+  tenantId!: string;
   topK?: number;
+  minSimilarity?: number;
 }
 
 @Controller('vectors')
@@ -43,6 +46,10 @@ export class VectorController {
 
     if (!request.content?.trim()) {
       throw new BadRequestException('Content is required');
+    }
+
+    if (!request.tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID is required');
     }
 
     const chunks = smartChunkDocument(request.content);
@@ -78,6 +85,7 @@ export class VectorController {
 
       const documentId = await this.vectorDb.storeDocument({
         title: request.title,
+        tenantId: request.tenantId,
         source: request.source,
         chunks: chunksWithEmbeddings,
       });
@@ -100,6 +108,10 @@ export class VectorController {
       throw new BadRequestException('Query is required');
     }
 
+    if (!request.tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID is required');
+    }
+
     const topK = request.topK ?? 5;
     if (!Number.isInteger(topK) || topK <= 0 || topK > 100) {
       throw new BadRequestException(
@@ -107,8 +119,25 @@ export class VectorController {
       );
     }
 
+    const minSimilarity = request.minSimilarity ?? 0;
+    if (
+      typeof minSimilarity !== 'number' ||
+      !Number.isFinite(minSimilarity) ||
+      minSimilarity < 0 ||
+      minSimilarity > 1
+    ) {
+      throw new BadRequestException(
+        'minSimilarity must be a number between 0 and 1',
+      );
+    }
+
     try {
-      const results = await this.vectorDb.semanticSearch(request.query, topK);
+      const results = await this.vectorDb.semanticSearch(
+        request.query,
+        request.tenantId,
+        topK,
+        minSimilarity,
+      );
       return {
         query: request.query,
         results,

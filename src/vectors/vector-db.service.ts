@@ -15,6 +15,7 @@ export interface StoreChunkRequest {
   content: string;
   embedding: number[];
   sourceDocumentId: string;
+  tenantId: string;
   pageNumber?: number;
   chunkIndex?: number;
   metadata?: Record<string, unknown>;
@@ -22,6 +23,7 @@ export interface StoreChunkRequest {
 
 export interface StoreDocumentRequest {
   title: string;
+  tenantId: string;
   source?: string;
   chunks: Array<{
     content: string;
@@ -37,6 +39,7 @@ export interface SearchResult {
   content: string;
   similarity: number; // cosine similarity score 0-1
   sourceDocumentId: string;
+  tenantId: string;
   pageNumber?: number;
   chunkIndex?: number;
 }
@@ -66,8 +69,14 @@ export class VectorDbService {
   // - If mismatch, PostgreSQL throws error
 
   async storeChunk(request: StoreChunkRequest): Promise<string> {
-    const { content, embedding, sourceDocumentId, pageNumber, chunkIndex } =
-      request;
+    const {
+      content,
+      embedding,
+      sourceDocumentId,
+      tenantId,
+      pageNumber,
+      chunkIndex,
+    } = request;
 
     // Validation
     if (!content || content.trim().length === 0) {
@@ -76,6 +85,10 @@ export class VectorDbService {
 
     if (!embedding || embedding.length === 0) {
       throw new BadRequestException('Embedding vector cannot be empty');
+    }
+
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID cannot be empty');
     }
 
     // Check dimension match
@@ -95,6 +108,7 @@ export class VectorDbService {
           content, 
           embedding, 
           "sourceDocumentId", 
+          "tenantId",
           "pageNumber", 
           "chunkIndex", 
           metadata,
@@ -106,6 +120,7 @@ export class VectorDbService {
           ${content},
           ${JSON.stringify(embedding)}::vector,
           ${sourceDocumentId},
+          ${tenantId},
           ${pageNumber || null},
           ${chunkIndex || null},
           ${request.metadata ? JSON.stringify(request.metadata) : null}::jsonb,
@@ -143,7 +158,7 @@ export class VectorDbService {
   // - In production, use proper Prisma transactions
 
   async storeDocument(request: StoreDocumentRequest): Promise<string> {
-    const { title, source, chunks } = request;
+    const { title, tenantId, source, chunks } = request;
 
     if (!title || title.trim().length === 0) {
       throw new BadRequestException('Document title cannot be empty');
@@ -153,13 +168,17 @@ export class VectorDbService {
       throw new BadRequestException('Document must have at least one chunk');
     }
 
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID cannot be empty');
+    }
+
     try {
       // Step 1: Create document record
       const docId = Math.random().toString(36).substring(2);
 
       await this.prisma.$queryRaw`
-        INSERT INTO "Document" (id, title, source, language, "isActive", "createdAt", "updatedAt")
-        VALUES (${docId}, ${title}, ${source || null}, 'en', true, NOW(), NOW())
+        INSERT INTO "Document" (id, title, source, "tenantId", language, "isActive", "createdAt", "updatedAt")
+        VALUES (${docId}, ${title}, ${source || null}, ${tenantId}, 'en', true, NOW(), NOW())
       `;
 
       // Step 2: Store all chunks
@@ -169,6 +188,7 @@ export class VectorDbService {
           content: chunk.content,
           embedding: chunk.embedding,
           sourceDocumentId: docId,
+          tenantId,
           pageNumber: chunk.pageNumber,
           chunkIndex: i,
           metadata: chunk.metadata,
@@ -204,7 +224,9 @@ export class VectorDbService {
 
   async semanticSearch(
     query: string,
+    tenantId: string,
     topK: number = 5,
+    minSimilarity: number = 0,
   ): Promise<SearchResult[]> {
     if (!query || query.trim().length === 0) {
       throw new BadRequestException('Query cannot be empty');
@@ -212,6 +234,14 @@ export class VectorDbService {
 
     if (topK <= 0 || topK > 100) {
       throw new BadRequestException('topK must be between 1 and 100');
+    }
+
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID cannot be empty');
+    }
+
+    if (minSimilarity < 0 || minSimilarity > 1) {
+      throw new BadRequestException('minSimilarity must be between 0 and 1');
     }
 
     try {
@@ -230,11 +260,14 @@ export class VectorDbService {
           id,
           content,
           "sourceDocumentId",
+          "tenantId",
           "pageNumber",
           "chunkIndex",
           (1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector)) as similarity
         FROM "DocumentChunk"
         WHERE embedding IS NOT NULL
+          AND "tenantId" = ${tenantId}
+          AND (1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector)) >= ${minSimilarity}
         ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector
         LIMIT ${topK}
       `;
@@ -245,6 +278,7 @@ export class VectorDbService {
           id: string;
           content: string;
           sourceDocumentId: string;
+          tenantId: string;
           pageNumber: number | null;
           chunkIndex: number | null;
           similarity: number;
@@ -254,8 +288,9 @@ export class VectorDbService {
         content: r.content,
         similarity: r.similarity,
         sourceDocumentId: r.sourceDocumentId,
-        pageNumber: r.pageNumber || undefined,
-        chunkIndex: r.chunkIndex || undefined,
+        tenantId: r.tenantId,
+        pageNumber: r.pageNumber ?? undefined,
+        chunkIndex: r.chunkIndex ?? undefined,
       }));
     } catch (error) {
       throw new Error(

@@ -36,6 +36,7 @@ model DocumentChunk {
   // Metadata: helps with filtering and debugging
   // Example: "document-abc", "page-5", "section-intro"
   sourceDocumentId String
+  tenantId String
   pageNumber Int?
   chunkIndex Int? // which chunk # in the document
   metadata Json?
@@ -46,6 +47,7 @@ model DocumentChunk {
   
   // Index on sourceDocumentId for fast filtering
   @@index([sourceDocumentId])
+  @@index([tenantId])
 }
 
 // ===================================================
@@ -64,6 +66,7 @@ model Document {
   
   // Where did it come from? (URL, filepath, etc.)
   source String?
+  tenantId String
   
   // For future: support language-specific embeddings
   language String @default("en")
@@ -76,6 +79,8 @@ model Document {
   
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 // ===================================================
