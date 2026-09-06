@@ -28,6 +28,7 @@ export type GenerateOptions = {
   topK?: number;
   numPredict?: number;
   stream?: boolean;
+  timeoutMs?: number;
 };
 
 @Injectable()
@@ -73,15 +74,29 @@ export class AiService {
       body.num_predict = options.numPredict;
     }
 
-    const response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    }).catch(() => {
+    const controller = new AbortController();
+    const timeout =
+      typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), options.timeoutMs)
+        : undefined;
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.ollamaBaseUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch {
       throw new ServiceUnavailableException('Unable to reach Ollama');
-    });
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -129,7 +144,9 @@ export class AiService {
     return this.generate(buildInvoiceSummaryPrompt(invoice));
   }
 
-  async extractInvoiceFromText(text: string): Promise<z.infer<typeof InvoiceExtractionSchema>> {
+  async extractInvoiceFromText(
+    text: string,
+  ): Promise<z.infer<typeof InvoiceExtractionSchema>> {
     const cleanText = text?.trim();
 
     if (!cleanText) {
@@ -164,7 +181,9 @@ export class AiService {
     return parsed;
   }
 
-  async assessFraud(invoiceText: string): Promise<z.infer<typeof FraudAssessmentSchema>> {
+  async assessFraud(
+    invoiceText: string,
+  ): Promise<z.infer<typeof FraudAssessmentSchema>> {
     const cleanText = invoiceText?.trim();
 
     if (!cleanText) {
