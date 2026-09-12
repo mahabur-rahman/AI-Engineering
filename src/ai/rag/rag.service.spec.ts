@@ -1,4 +1,7 @@
-import { BadGatewayException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { AiService } from '../ai.service';
 import { RagService } from './rag.service';
 import { VectorDbService } from '../../vectors/vector-db.service';
@@ -145,5 +148,41 @@ describe('RagService', () => {
     await expect(
       service.ask({ question: 'Known question', tenantId: 'tenant-a' }),
     ).rejects.toBeInstanceOf(BadGatewayException);
+  });
+
+  it('maps retrieval failures to a service-unavailable error without calling the LLM', async () => {
+    const vectorDb = {
+      semanticSearch: jest.fn().mockRejectedValue(new Error('DB unreachable')),
+    };
+    const aiService = { generate: jest.fn() };
+    const service = new RagService(
+      vectorDb as unknown as VectorDbService,
+      aiService as unknown as AiService,
+    );
+
+    await expect(
+      service.ask({ question: 'Known question', tenantId: 'tenant-a' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(aiService.generate).not.toHaveBeenCalled();
+  });
+
+  it('scopes retrieval to the requesting tenant only', async () => {
+    const vectorDb = {
+      semanticSearch: jest.fn().mockResolvedValue([]),
+    };
+    const aiService = { generate: jest.fn() };
+    const service = new RagService(
+      vectorDb as unknown as VectorDbService,
+      aiService as unknown as AiService,
+    );
+
+    await service.ask({ question: 'Known question', tenantId: 'tenant-b' });
+
+    expect(vectorDb.semanticSearch).toHaveBeenCalledWith(
+      'Known question',
+      'tenant-b',
+      5,
+      0.5,
+    );
   });
 });

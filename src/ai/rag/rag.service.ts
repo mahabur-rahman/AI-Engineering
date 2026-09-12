@@ -2,6 +2,8 @@ import {
   BadGatewayException,
   BadRequestException,
   Injectable,
+  Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { AiService } from '../ai.service';
 import { buildRetrievedContext } from './context-builder';
@@ -30,6 +32,8 @@ export interface AskResponse {
 
 @Injectable()
 export class RagService {
+  private readonly logger = new Logger(RagService.name);
+
   constructor(
     private readonly vectorDb: VectorDbService,
     private readonly aiService: AiService,
@@ -73,15 +77,37 @@ export class RagService {
       );
     }
 
-    const results = await this.vectorDb.semanticSearch(
-      question,
-      tenantId,
-      topK,
-      minSimilarity,
+    this.logger.log(
+      `ask received tenantId=${tenantId} questionLength=${question.length} topK=${topK} minSimilarity=${minSimilarity}`,
     );
+
+    let results: SearchResult[];
+    try {
+      results = await this.vectorDb.semanticSearch(
+        question,
+        tenantId,
+        topK,
+        minSimilarity,
+      );
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error(
+        `retrieval failed tenantId=${tenantId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new ServiceUnavailableException(
+        'Retrieval failed. Please try again.',
+      );
+    }
+
     const context = buildRetrievedContext(results, maxContextChars);
+    this.logger.log(
+      `retrieval complete tenantId=${tenantId} resultCount=${results.length} sourceCount=${context.sources.length} contextChars=${context.context.length}`,
+    );
 
     if (context.sources.length === 0) {
+      this.logger.log(`no useful context tenantId=${tenantId}`);
       return {
         answer: 'I do not know based on the provided context.',
         sources: [],
@@ -101,10 +127,15 @@ export class RagService {
       if (error instanceof BadRequestException) {
         throw error;
       }
+      this.logger.error(
+        `generation failed tenantId=${tenantId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       throw new BadGatewayException(
         `RAG generation failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+
+    this.logger.log(`ask completed tenantId=${tenantId} answerLength=${answer.length}`);
 
     return {
       answer,
