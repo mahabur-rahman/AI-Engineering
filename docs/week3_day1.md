@@ -303,3 +303,40 @@ Week 3 Day 2-তে move করা হবে না যতক্ষণ না:
 3. Coding implementation সম্পূর্ণ হয়
 4. Retrieval test সম্পূর্ণ হয়
 5. Selected pgvector distance/similarity metric-এর সাথে threshold কেন কাজ করে তা বোঝা যায়
+
+---
+
+# RESULTS - Coding Completed
+
+## Metric
+
+- pgvector `<=>` = **cosine distance** (lower = more similar)
+- `score = 1 - distance` (higher = more similar)
+- Threshold is applied inside SQL: `score >= similarityThreshold`, then `ORDER BY distance`, then `LIMIT topK`
+
+## Files changed
+
+| File | Change |
+|---|---|
+| `src/vectors/vector.controller.ts` | `similarityThreshold` param (`minSimilarity` still accepted); response returns `chunkId`, `documentId`, `score`, `content`, metadata, `noRelevantContext` |
+| `src/vectors/vector-db.service.ts` | debug log: tenant, topK, threshold, count, `chunkId:score` (query length only, no query text) |
+| `src/vectors/vector.controller.spec.ts` | 3 new tests: alias, score/metadata, no-result flag |
+| `scripts/compare-retrieval.ts` | `npm run compare:retrieval` - Top-K only vs Top-K + threshold |
+
+## Top-K only vs Top-K + threshold (live, nomic-embed-text)
+
+| Query type | Best score | topK=5, threshold 0 | threshold 0.5 | threshold 0.7 |
+|---|---|---|---|---|
+| Highly relevant | 0.83 | 4 chunks (incl. 0.67 noise) | 4 | 2 |
+| Partially relevant | 0.77 | 4 (incl. 0.60 noise) | 4 | 2 |
+| Ambiguous | 0.64 | 4 (down to 0.50) | 2 | 0 (recall lost) |
+| Irrelevant (parking) | 0.46 | 4 (false positives) | 0 | 0 |
+| No matching doc (shipping) | 0.43 | 4 (false positives) | 0 | 0 |
+
+## Findings
+
+- Top-K alone always returns chunks, even for irrelevant queries (false positives, scores about 0.43-0.46).
+- Threshold 0.5 removes those, so no irrelevant chunk reaches the LLM.
+- Threshold 0.7 removes noise for relevant queries but drops the ambiguous query (recall loss).
+- Good starting point for this dataset and model: threshold about 0.5-0.6. It is model- and data-specific, not universal.
+- Repeated seeding left duplicate chunks for `eval-tenant` (each result appears twice); harmless for the comparison.

@@ -54,4 +54,62 @@ describe('VectorController retrieval validation', () => {
     );
     expect(vectorDb.semanticSearch).not.toHaveBeenCalled();
   });
+  it('accepts similarityThreshold as the threshold parameter', async () => {
+    await controller.semanticSearch({
+      query: 'refund status',
+      tenantId: 'tenant-a',
+      topK: 3,
+      similarityThreshold: 0.6,
+    });
+
+    expect(vectorDb.semanticSearch).toHaveBeenCalledWith(
+      'refund status',
+      'tenant-a',
+      3,
+      0.6,
+    );
+  });
+
+  it('returns score and chunk metadata for each result', async () => {
+    vectorDb.semanticSearch.mockResolvedValue([
+      {
+        id: 'chunk-1',
+        content: 'Refunds take 5 days.',
+        similarity: 0.87,
+        sourceDocumentId: 'doc-1',
+        tenantId: 'tenant-a',
+        pageNumber: 1,
+        chunkIndex: 0,
+      },
+    ]);
+
+    const response = await controller.semanticSearch({
+      query: 'refund',
+      tenantId: 'tenant-a',
+    });
+
+    expect(response.noRelevantContext).toBe(false);
+    expect(response.results[0]).toEqual({
+      chunkId: 'chunk-1',
+      documentId: 'doc-1',
+      tenantId: 'tenant-a',
+      score: 0.87,
+      content: 'Refunds take 5 days.',
+      pageNumber: 1,
+      chunkIndex: 0,
+    });
+  });
+
+  it('flags noRelevantContext when nothing passes the threshold', async () => {
+    vectorDb.semanticSearch.mockResolvedValue([]);
+
+    const response = await controller.semanticSearch({
+      query: 'parking policy',
+      tenantId: 'tenant-a',
+      similarityThreshold: 0.9,
+    });
+
+    expect(response.results).toEqual([]);
+    expect(response.noRelevantContext).toBe(true);
+  });
 });
