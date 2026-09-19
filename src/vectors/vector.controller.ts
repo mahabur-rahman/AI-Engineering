@@ -28,6 +28,8 @@ export class SemanticSearchRequest {
   query!: string;
   tenantId!: string;
   topK?: number;
+  similarityThreshold?: number;
+  /** @deprecated use similarityThreshold */
   minSimilarity?: number;
 }
 
@@ -119,7 +121,8 @@ export class VectorController {
       );
     }
 
-    const minSimilarity = request.minSimilarity ?? 0;
+    const minSimilarity =
+      request.similarityThreshold ?? request.minSimilarity ?? 0;
     if (
       typeof minSimilarity !== 'number' ||
       !Number.isFinite(minSimilarity) ||
@@ -140,8 +143,19 @@ export class VectorController {
       );
       return {
         query: request.query,
-        results,
+        topK,
+        similarityThreshold: minSimilarity,
+        results: results.map((r) => ({
+          chunkId: r.id,
+          documentId: r.sourceDocumentId,
+          tenantId: r.tenantId,
+          score: r.similarity,
+          content: r.content,
+          pageNumber: r.pageNumber,
+          chunkIndex: r.chunkIndex,
+        })),
         totalResults: results.length,
+        noRelevantContext: results.length === 0,
       };
     } catch (error) {
       throw new BadRequestException(

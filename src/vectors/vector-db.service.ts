@@ -3,7 +3,7 @@
 // Why: PostgreSQL integrates with existing stack, pgvector adds vector search
 // Where used: Ingesting documents and searching semantically
 
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { EmbeddingService } from './embedding.service';
 
@@ -51,6 +51,7 @@ export interface SearchResult {
 @Injectable()
 export class VectorDbService {
   private prisma: PrismaClient;
+  private readonly logger = new Logger(VectorDbService.name);
 
   constructor(private embeddingService: EmbeddingService) {
     this.prisma = new PrismaClient();
@@ -273,7 +274,7 @@ export class VectorDbService {
       `;
 
       // Step 3: Map results to our type
-      return (
+      const mapped = (
         (results as Array<{
           id: string;
           content: string;
@@ -292,6 +293,13 @@ export class VectorDbService {
         pageNumber: r.pageNumber ?? undefined,
         chunkIndex: r.chunkIndex ?? undefined,
       }));
+
+      this.logger.debug(
+        `search tenantId=${tenantId} queryLength=${query.length} topK=${topK} threshold=${minSimilarity} returned=${mapped.length} hits=${mapped
+          .map((r) => `${r.id}:${r.similarity.toFixed(3)}`)
+          .join(',')}`,
+      );
+      return mapped;
     } catch (error) {
       throw new Error(
         `Semantic search failed: ${error instanceof Error ? error.message : String(error)}`,
