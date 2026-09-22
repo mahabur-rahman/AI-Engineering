@@ -7,13 +7,19 @@ import {
 } from '@nestjs/common';
 import { AiService } from '../ai.service';
 import { buildRetrievedContext } from './context-builder';
-import type { SearchResult } from '../../vectors/vector-db.service';
-import { VectorDbService } from '../../vectors/vector-db.service';
+import { HybridRetrievalService } from '../../retrieval/hybrid-retrieval.service';
+import type { HybridResult } from '../../retrieval/retrieval.types';
 
 export interface AskRequest {
   question: string;
   tenantId: string;
+  /** Final number of chunks sent to the LLM. */
   topK?: number;
+  vectorTopK?: number;
+  keywordTopK?: number;
+  rrfK?: number;
+  similarityThreshold?: number;
+  /** @deprecated use similarityThreshold */
   minSimilarity?: number;
   maxContextChars?: number;
 }
@@ -24,7 +30,11 @@ export interface AskResponse {
     chunkId: string;
     documentId: string;
     tenantId: string;
-    similarity: number;
+    similarity?: number;
+    keywordScore?: number;
+    vectorRank?: number;
+    keywordRank?: number;
+    fusedScore: number;
     pageNumber?: number;
     chunkIndex?: number;
   }>;
@@ -35,7 +45,7 @@ export class RagService {
   private readonly logger = new Logger(RagService.name);
 
   constructor(
-    private readonly vectorDb: VectorDbService,
+    private readonly retrieval: HybridRetrievalService,
     private readonly aiService: AiService,
   ) {}
 
@@ -52,7 +62,8 @@ export class RagService {
     }
 
     const topK = request.topK ?? 5;
-    const minSimilarity = request.minSimilarity ?? 0.5;
+    const minSimilarity =
+      request.similarityThreshold ?? request.minSimilarity ?? 0.5;
     const maxContextChars = request.maxContextChars ?? 6000;
 
     if (!Number.isInteger(topK) || topK < 1 || topK > 20) {
@@ -81,14 +92,15 @@ export class RagService {
       `ask received tenantId=${tenantId} questionLength=${question.length} topK=${topK} minSimilarity=${minSimilarity}`,
     );
 
-    let results: SearchResult[];
+    let results: HybridResult[];
     try {
-      results = await this.vectorDb.semanticSearch(
-        question,
-        tenantId,
-        topK,
-        minSimilarity,
-      );
+      results = await this.retrieval.search(question, tenantId, {
+        finalTopK: topK,
+        vectorTopK: request.vectorTopK,
+        keywordTopK: request.keywordTopK,
+        rrfK: request.rrfK,
+        similarityThreshold: minSimilarity,
+      });
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
@@ -162,12 +174,16 @@ ${question}
 </user_question>`;
   }
 
-  private toSource(source: SearchResult): AskResponse['sources'][number] {
+  private toSource(source: HybridResult): AskResponse['sources'][number] {
     return {
-      chunkId: source.id,
-      documentId: source.sourceDocumentId,
+      chunkId: source.chunkId,
+      documentId: source.documentId,
       tenantId: source.tenantId,
-      similarity: source.similarity,
+      similarity: source.vectorScore,
+      keywordScore: source.keywordScore,
+      vectorRank: source.vectorRank,
+      keywordRank: source.keywordRank,
+      fusedScore: source.fusedScore,
       pageNumber: source.pageNumber,
       chunkIndex: source.chunkIndex,
     };

@@ -228,6 +228,7 @@ export class VectorDbService {
     tenantId: string,
     topK: number = 5,
     minSimilarity: number = 0,
+    filters: { sourceDocumentId?: string } = {},
   ): Promise<SearchResult[]> {
     if (!query || query.trim().length === 0) {
       throw new BadRequestException('Query cannot be empty');
@@ -268,6 +269,7 @@ export class VectorDbService {
         FROM "DocumentChunk"
         WHERE embedding IS NOT NULL
           AND "tenantId" = ${tenantId}
+          AND (${filters.sourceDocumentId ?? null}::text IS NULL OR "sourceDocumentId" = ${filters.sourceDocumentId ?? null})
           AND (1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector)) >= ${minSimilarity}
         ORDER BY embedding <=> ${JSON.stringify(queryEmbedding)}::vector
         LIMIT ${topK}

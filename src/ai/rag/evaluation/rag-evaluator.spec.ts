@@ -16,6 +16,7 @@ const source = (documentId = 'doc-1') => ({
   documentId,
   tenantId: 'eval-tenant',
   similarity: 0.9,
+  fusedScore: 0.03,
 });
 
 describe('evaluateCase', () => {
