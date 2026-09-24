@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand --passWithNoTests",
     "test:e2e": "jest --config ./test/jest-e2e.json --passWithNoTests",
     "eval:rag": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/run-rag-eval.ts",
-    "compare:retrieval": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-retrieval.ts"
+    "compare:retrieval": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-retrieval.ts",
+    "compare:hybrid": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-hybrid.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

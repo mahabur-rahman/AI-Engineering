@@ -1,21 +1,19 @@
-import type { SearchResult } from '../../vectors/vector-db.service';
-
-export interface ContextBuildResult {
+export interface ContextBuildResult<T extends { content: string }> {
   context: string;
-  sources: SearchResult[];
+  sources: T[];
 }
 
-export function buildRetrievedContext(
-  results: SearchResult[],
+export function buildRetrievedContext<T extends { content: string }>(
+  results: T[],
   maxContextChars: number = 6000,
-): ContextBuildResult {
+): ContextBuildResult<T> {
   if (maxContextChars <= 0) {
     return { context: '', sources: [] };
   }
 
   const seenContent = new Set<string>();
   const contextParts: string[] = [];
-  const sources: SearchResult[] = [];
+  const sources: T[] = [];
   let contextLength = 0;
 
   for (const result of results) {

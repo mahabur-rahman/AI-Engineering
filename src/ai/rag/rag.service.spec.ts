@@ -4,31 +4,37 @@ import {
 } from '@nestjs/common';
 import { AiService } from '../ai.service';
 import { RagService } from './rag.service';
-import { VectorDbService } from '../../vectors/vector-db.service';
+import { HybridRetrievalService } from '../../retrieval/hybrid-retrieval.service';
+import type { HybridResult } from '../../retrieval/retrieval.types';
+
+const hit = (overrides: Partial<HybridResult> = {}): HybridResult => ({
+  chunkId: 'chunk-1',
+  documentId: 'document-1',
+  tenantId: 'tenant-a',
+  content: 'Refunds are requested from the billing page.',
+  vectorScore: 0.9,
+  vectorRank: 1,
+  fusedScore: 0.0164,
+  ...overrides,
+});
+
+const build = (search: jest.Mock, generate: jest.Mock = jest.fn()) => {
+  const retrieval = { search };
+  const aiService = { generate };
+  const service = new RagService(
+    retrieval as unknown as HybridRetrievalService,
+    aiService as unknown as AiService,
+  );
+  return { service, retrieval, aiService };
+};
 
 describe('RagService', () => {
   it('returns a grounded answer with ordered source metadata', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockResolvedValue([
-        {
-          id: 'chunk-1',
-          content: 'Refunds are requested from the billing page.',
-          similarity: 0.9,
-          sourceDocumentId: 'document-1',
-          tenantId: 'tenant-a',
-          pageNumber: 2,
-          chunkIndex: 0,
-        },
+    const { service, aiService } = build(
+      jest.fn().mockResolvedValue([
+        hit({ pageNumber: 2, chunkIndex: 0, keywordScore: 0.4, keywordRank: 2 }),
       ]),
-    };
-    const aiService = {
-      generate: jest
-        .fn()
-        .mockResolvedValue('Request it from the billing page.'),
-    };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
+      jest.fn().mockResolvedValue('Request it from the billing page.'),
     );
 
     const response = await service.ask({
@@ -44,6 +50,10 @@ describe('RagService', () => {
           documentId: 'document-1',
           tenantId: 'tenant-a',
           similarity: 0.9,
+          keywordScore: 0.4,
+          vectorRank: 1,
+          keywordRank: 2,
+          fusedScore: 0.0164,
           pageNumber: 2,
           chunkIndex: 0,
         },
@@ -56,14 +66,7 @@ describe('RagService', () => {
   });
 
   it('does not call the LLM when retrieval has no useful context', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockResolvedValue([]),
-    };
-    const aiService = { generate: jest.fn() };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
-    );
+    const { service, aiService } = build(jest.fn().mockResolvedValue([]));
 
     await expect(
       service.ask({ question: 'Unknown topic', tenantId: 'tenant-a' }),
@@ -75,23 +78,9 @@ describe('RagService', () => {
   });
 
   it('sends grounding rules and the user question in the RAG prompt', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockResolvedValue([
-        {
-          id: 'chunk-1',
-          content: 'Refunds are requested from the billing page.',
-          similarity: 0.9,
-          sourceDocumentId: 'document-1',
-          tenantId: 'tenant-a',
-        },
-      ]),
-    };
-    const aiService = {
-      generate: jest.fn().mockResolvedValue('Supported answer.'),
-    };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
+    const { service, aiService } = build(
+      jest.fn().mockResolvedValue([hit()]),
+      jest.fn().mockResolvedValue('Supported answer.'),
     );
 
     await service.ask({
@@ -108,12 +97,7 @@ describe('RagService', () => {
   });
 
   it('rejects invalid request limits before retrieval', async () => {
-    const vectorDb = { semanticSearch: jest.fn() };
-    const aiService = { generate: jest.fn() };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
-    );
+    const { service, retrieval } = build(jest.fn());
 
     await expect(
       service.ask({
@@ -122,27 +106,13 @@ describe('RagService', () => {
         topK: 21,
       }),
     ).rejects.toThrow('topK must be an integer between 1 and 20');
-    expect(vectorDb.semanticSearch).not.toHaveBeenCalled();
+    expect(retrieval.search).not.toHaveBeenCalled();
   });
 
   it('maps LLM failures to a gateway error', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockResolvedValue([
-        {
-          id: 'chunk-1',
-          content: 'Known fact.',
-          similarity: 0.9,
-          sourceDocumentId: 'document-1',
-          tenantId: 'tenant-a',
-        },
-      ]),
-    };
-    const aiService = {
-      generate: jest.fn().mockRejectedValue(new Error('Ollama unavailable')),
-    };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
+    const { service } = build(
+      jest.fn().mockResolvedValue([hit({ content: 'Known fact.' })]),
+      jest.fn().mockRejectedValue(new Error('Ollama unavailable')),
     );
 
     await expect(
@@ -150,14 +120,9 @@ describe('RagService', () => {
     ).rejects.toBeInstanceOf(BadGatewayException);
   });
 
-  it('maps retrieval failures to a service-unavailable error without calling the LLM', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockRejectedValue(new Error('DB unreachable')),
-    };
-    const aiService = { generate: jest.fn() };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
+  it('maps retrieval failures to service-unavailable without calling the LLM', async () => {
+    const { service, aiService } = build(
+      jest.fn().mockRejectedValue(new Error('DB unreachable')),
     );
 
     await expect(
@@ -166,23 +131,25 @@ describe('RagService', () => {
     expect(aiService.generate).not.toHaveBeenCalled();
   });
 
-  it('scopes retrieval to the requesting tenant only', async () => {
-    const vectorDb = {
-      semanticSearch: jest.fn().mockResolvedValue([]),
-    };
-    const aiService = { generate: jest.fn() };
-    const service = new RagService(
-      vectorDb as unknown as VectorDbService,
-      aiService as unknown as AiService,
-    );
+  it('passes tenant, final Top-K and retrieval overrides to hybrid retrieval', async () => {
+    const { service, retrieval } = build(jest.fn().mockResolvedValue([]));
 
-    await service.ask({ question: 'Known question', tenantId: 'tenant-b' });
+    await service.ask({
+      question: 'Known question',
+      tenantId: 'tenant-b',
+      topK: 3,
+      vectorTopK: 8,
+      keywordTopK: 6,
+      rrfK: 30,
+      similarityThreshold: 0.6,
+    });
 
-    expect(vectorDb.semanticSearch).toHaveBeenCalledWith(
-      'Known question',
-      'tenant-b',
-      5,
-      0.5,
-    );
+    expect(retrieval.search).toHaveBeenCalledWith('Known question', 'tenant-b', {
+      finalTopK: 3,
+      vectorTopK: 8,
+      keywordTopK: 6,
+      rrfK: 30,
+      similarityThreshold: 0.6,
+    });
   });
 });
