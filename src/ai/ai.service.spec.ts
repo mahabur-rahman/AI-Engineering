@@ -60,4 +60,27 @@ describe('AiService', () => {
       }),
     );
   });
+
+  it('keeps the request timeout active until generation response processing finishes', async () => {
+    const service = new AiService({
+      getOrThrow: (key: string) => {
+        if (key === 'OLLAMA_BASE_URL') return 'http://localhost:11434';
+        if (key === 'OLLAMA_MODEL') return 'llama3.2:3b';
+        throw new Error(`Missing ${key}`);
+      },
+    } as any);
+
+    (global.fetch as jest.Mock).mockImplementation(
+      (_url: string, options: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () =>
+            reject(new Error('aborted')),
+          );
+        }),
+    );
+
+    await expect(
+      service.generate('slow generation', { timeoutMs: 5 }),
+    ).rejects.toThrow('Ollama request timed out');
+  });
 });

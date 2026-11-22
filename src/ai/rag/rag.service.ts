@@ -11,6 +11,10 @@ import { HybridRetrievalService } from '../../retrieval/hybrid-retrieval.service
 import type { HybridResult } from '../../retrieval/retrieval.types';
 import { Reranker } from '../reranking/reranker.types';
 import { applyReranking } from '../reranking/reranker';
+import {
+  mergeMultiQueryResults,
+  MultiQueryService,
+} from './multi-query.service';
 
 const DEFAULT_CANDIDATE_TOP_K = 20;
 
@@ -28,6 +32,8 @@ export interface AskRequest {
   /** @deprecated use similarityThreshold */
   minSimilarity?: number;
   maxContextChars?: number;
+  /** Total retrieval queries including the original query (1-5, default 3). */
+  queryCount?: number;
 }
 
 export interface AskResponse {
@@ -45,6 +51,9 @@ export interface AskResponse {
     rerankerRank?: number;
     pageNumber?: number;
     chunkIndex?: number;
+    queryRanks?: number[];
+    queryScores?: number[];
+    matchedQueryCount?: number;
   }>;
 }
 
@@ -56,6 +65,7 @@ export class RagService {
     private readonly retrieval: HybridRetrievalService,
     private readonly aiService: AiService,
     private readonly reranker: Reranker,
+    private readonly multiQuery: MultiQueryService,
   ) {}
 
   async ask(request: AskRequest): Promise<AskResponse> {
@@ -74,21 +84,35 @@ export class RagService {
     const minSimilarity =
       request.similarityThreshold ?? request.minSimilarity ?? 0.5;
     const maxContextChars = request.maxContextChars ?? 6000;
+    const queryCount = request.queryCount ?? 3;
 
     if (!Number.isInteger(topK) || topK < 1 || topK > 20) {
       throw new BadRequestException('topK must be an integer between 1 and 20');
     }
 
-    const candidateTopK = request.candidateTopK ?? Math.max(DEFAULT_CANDIDATE_TOP_K, topK);
+    const candidateTopK =
+      request.candidateTopK ?? Math.max(DEFAULT_CANDIDATE_TOP_K, topK);
 
-    if (!Number.isInteger(candidateTopK) || candidateTopK < 1 || candidateTopK > 100) {
+    if (
+      !Number.isInteger(candidateTopK) ||
+      candidateTopK < 1 ||
+      candidateTopK > 100
+    ) {
       throw new BadRequestException(
         'candidateTopK must be an integer between 1 and 100',
       );
     }
 
     if (candidateTopK < topK) {
-      throw new BadRequestException('candidateTopK must be greater than or equal to topK');
+      throw new BadRequestException(
+        'candidateTopK must be greater than or equal to topK',
+      );
+    }
+
+    if (!Number.isInteger(queryCount) || queryCount < 1 || queryCount > 5) {
+      throw new BadRequestException(
+        'queryCount must be an integer between 1 and 5',
+      );
     }
 
     if (
@@ -110,29 +134,68 @@ export class RagService {
     }
 
     this.logger.log(
-      `ask received tenantId=${tenantId} questionLength=${question.length} candidateTopK=${candidateTopK} topK=${topK} minSimilarity=${minSimilarity}`,
+      `ask received tenantId=${tenantId} questionLength=${question.length} queryCount=${queryCount} candidateTopK=${candidateTopK} topK=${topK} minSimilarity=${minSimilarity}`,
     );
 
-    let candidates: HybridResult[];
-    try {
-      candidates = await this.retrieval.search(question, tenantId, {
-        finalTopK: candidateTopK,
-        vectorTopK: request.vectorTopK,
-        keywordTopK: request.keywordTopK,
-        rrfK: request.rrfK,
-        similarityThreshold: minSimilarity,
-      });
-    } catch (error) {
-      if (error instanceof BadRequestException) {
-        throw error;
+    const queryGenerationStartedAt = Date.now();
+    const queryExpansion = await this.multiQuery.generateQueries(
+      question,
+      queryCount,
+    );
+    const queryGenerationLatencyMs = Date.now() - queryGenerationStartedAt;
+    const retrievalStartedAt = Date.now();
+    const outcomes = await Promise.allSettled(
+      queryExpansion.queries.map((query) =>
+        this.retrieval.search(query, tenantId, {
+          finalTopK: candidateTopK,
+          vectorTopK: request.vectorTopK,
+          keywordTopK: request.keywordTopK,
+          rrfK: request.rrfK,
+          similarityThreshold: minSimilarity,
+        }),
+      ),
+    );
+
+    const successfulResultSets: HybridResult[][] = [];
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled') {
+        successfulResultSets.push(outcome.value);
+      } else {
+        this.logger.warn(
+          `retrieval failed for queryIndex=${index} tenantId=${tenantId} errorType=${errorType(outcome.reason)}`,
+        );
       }
+    });
+
+    const invalidInput = outcomes.find(
+      (outcome) =>
+        outcome.status === 'rejected' &&
+        outcome.reason instanceof BadRequestException,
+    );
+    if (invalidInput?.status === 'rejected') throw invalidInput.reason;
+
+    if (successfulResultSets.length === 0) {
       this.logger.error(
-        `retrieval failed tenantId=${tenantId}: ${error instanceof Error ? error.message : String(error)}`,
+        `all multi-query retrieval attempts failed tenantId=${tenantId}`,
       );
       throw new ServiceUnavailableException(
         'Retrieval failed. Please try again.',
       );
     }
+
+    const candidates = mergeMultiQueryResults(
+      successfulResultSets,
+      candidateTopK,
+      request.rrfK ?? 60,
+    ) as HybridResult[];
+    const retrievalLatencyMs = Date.now() - retrievalStartedAt;
+
+    this.logger.log(
+      `multi-query retrieval complete tenantId=${tenantId} queries=${queryExpansion.queries.length} ` +
+        `queryGenerationFallback=${queryExpansion.usedFallback} successfulQueries=${successfulResultSets.length} ` +
+        `candidateCount=${candidates.length} candidateTopK=${candidateTopK} ` +
+        `queryGenerationLatencyMs=${queryGenerationLatencyMs} retrievalLatencyMs=${retrievalLatencyMs}`,
+    );
 
     if (candidates.length === 0) {
       this.logger.log(`no candidates for reranking tenantId=${tenantId}`);
@@ -157,7 +220,11 @@ export class RagService {
     }
     const rerankLatencyMs = Date.now() - rerankStartedAt;
 
-    const { items: ranked, usedFallback } = applyReranking(candidates, scores, topK);
+    const { items: ranked, usedFallback } = applyReranking(
+      candidates,
+      scores,
+      topK,
+    );
     const results = ranked.map((entry) => ({
       ...entry.item,
       rerankerScore: entry.rerankerScore,
@@ -204,7 +271,9 @@ export class RagService {
       );
     }
 
-    this.logger.log(`ask completed tenantId=${tenantId} answerLength=${answer.length}`);
+    this.logger.log(
+      `ask completed tenantId=${tenantId} answerLength=${answer.length}`,
+    );
 
     return {
       answer,
@@ -232,7 +301,10 @@ ${question}
   }
 
   private toSource(
-    source: HybridResult & { rerankerScore: number | null; rerankerRank: number },
+    source: HybridResult & {
+      rerankerScore: number | null;
+      rerankerRank: number;
+    },
   ): AskResponse['sources'][number] {
     return {
       chunkId: source.chunkId,
@@ -247,6 +319,13 @@ ${question}
       rerankerRank: source.rerankerRank,
       pageNumber: source.pageNumber,
       chunkIndex: source.chunkIndex,
+      queryRanks: source.queryRanks,
+      queryScores: source.queryScores,
+      matchedQueryCount: source.matchedQueryCount,
     };
   }
+}
+
+function errorType(error: unknown): string {
+  return error instanceof Error ? error.name : 'UnknownError';
 }

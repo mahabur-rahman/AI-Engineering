@@ -49,4 +49,10 @@ export interface HybridResult {
   vectorRank?: number;
   keywordRank?: number;
   fusedScore: number;
+  /** One-based rank for this chunk in each query result set. */
+  queryRanks?: number[];
+  /** Original hybrid scores from each query before cross-query fusion. */
+  queryScores?: number[];
+  /** Number of distinct queries whose result set contained this chunk. */
+  matchedQueryCount?: number;
 }

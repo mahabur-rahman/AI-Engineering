@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  GatewayTimeoutException,
   Injectable,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -91,31 +92,46 @@ export class AiService {
         signal: controller.signal,
       });
     } catch {
+      if (controller.signal.aborted) {
+        if (timeout) clearTimeout(timeout);
+        throw new GatewayTimeoutException('Ollama request timed out');
+      }
+      if (timeout) clearTimeout(timeout);
       throw new ServiceUnavailableException('Unable to reach Ollama');
+    }
+
+    try {
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new BadGatewayException(
+          `Ollama returned ${response.status}: ${errorText || response.statusText}`,
+        );
+      }
+
+      let data: { response?: string };
+      try {
+        data = (await response.json()) as { response?: string };
+      } catch {
+        throw new BadGatewayException('Ollama returned invalid JSON');
+      }
+
+      if (typeof data.response !== 'string') {
+        throw new BadGatewayException(
+          'Ollama response did not contain generated text',
+        );
+      }
+
+      return data.response.trim();
+    } catch (error) {
+      if (timeout && controller.signal.aborted) {
+        throw new GatewayTimeoutException('Ollama request timed out');
+      }
+      throw error;
     } finally {
       if (timeout) {
         clearTimeout(timeout);
       }
     }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new BadGatewayException(
-        `Ollama returned ${response.status}: ${errorText || response.statusText}`,
-      );
-    }
-
-    const data = (await response.json()) as {
-      response?: string;
-    };
-
-    if (typeof data.response !== 'string') {
-      throw new BadGatewayException(
-        'Ollama response did not contain generated text',
-      );
-    }
-
-    return data.response.trim();
   }
 
   async classifyZeroShot(message: string): Promise<string> {
