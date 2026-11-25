@@ -181,6 +181,9 @@ Thu Chunking Strategy Fixed-size vs sentence-based vs recursive — ২টা im
 
 WEEK 3 **RAG Pipeline: Retrieval** 
 
+Week 3 Day 5 HyDE implementation and terminal evaluation guide: [week3_day5.md](week3_day5.md).
+Week 3 Day 6 Parent-Document / Small-to-Big Retrieval plan: [week3_day6.md](week3_day6.md).
+
 **কেন:** RAG দিয়ে AI তোমার নিজের ডেটা ব্যবহার করে উত্তর দিতে পারে — enterprise AI Engineering এর কেন্দ্রীয় স্কিল। 
 
 **কোথা থেকে:** "RAG from Scratch" (framework ছাড়া প্রথমে নিজে বানানো), pgvector docs 

@@ -15,6 +15,8 @@ import {
   mergeMultiQueryResults,
   MultiQueryService,
 } from './multi-query.service';
+import { ConfigService } from '@nestjs/config';
+import { HyDEService } from './hyde.service';
 
 const DEFAULT_CANDIDATE_TOP_K = 20;
 
@@ -34,10 +36,18 @@ export interface AskRequest {
   maxContextChars?: number;
   /** Total retrieval queries including the original query (1-5, default 3). */
   queryCount?: number;
+  /** Override HYDE_ENABLED for this request. */
+  useHyde?: boolean;
 }
 
 export interface AskResponse {
   answer: string;
+  retrieval?: {
+    strategy: string;
+    hydeEnabled: boolean;
+    hydeFallback?: boolean;
+    hydeFallbackReason?: string;
+  };
   sources: Array<{
     chunkId: string;
     documentId: string;
@@ -66,6 +76,8 @@ export class RagService {
     private readonly aiService: AiService,
     private readonly reranker: Reranker,
     private readonly multiQuery: MultiQueryService,
+    private readonly hyde: HyDEService,
+    private readonly config: ConfigService,
   ) {}
 
   async ask(request: AskRequest): Promise<AskResponse> {
@@ -85,6 +97,8 @@ export class RagService {
       request.similarityThreshold ?? request.minSimilarity ?? 0.5;
     const maxContextChars = request.maxContextChars ?? 6000;
     const queryCount = request.queryCount ?? 3;
+    const hydeEnabled =
+      request.useHyde ?? this.config.get<string>('HYDE_ENABLED') === 'true';
 
     if (!Number.isInteger(topK) || topK < 1 || topK > 20) {
       throw new BadRequestException('topK must be an integer between 1 and 20');
@@ -138,10 +152,12 @@ export class RagService {
     );
 
     const queryGenerationStartedAt = Date.now();
-    const queryExpansion = await this.multiQuery.generateQueries(
-      question,
-      queryCount,
-    );
+    const [queryExpansion, hydeResult] = await Promise.all([
+      this.multiQuery.generateQueries(question, queryCount),
+      hydeEnabled
+        ? this.hyde.createRetrievalEmbedding(question)
+        : Promise.resolve(undefined),
+    ]);
     const queryGenerationLatencyMs = Date.now() - queryGenerationStartedAt;
     const retrievalStartedAt = Date.now();
     const outcomes = await Promise.allSettled(
@@ -167,6 +183,29 @@ export class RagService {
       }
     });
 
+    if (hydeResult) {
+      try {
+        successfulResultSets.push(
+          await this.retrieval.searchWithEmbedding(
+            question,
+            tenantId,
+            hydeResult.embedding,
+            {
+              finalTopK: candidateTopK,
+              vectorTopK: request.vectorTopK,
+              keywordTopK: request.keywordTopK,
+              rrfK: request.rrfK,
+              similarityThreshold: minSimilarity,
+            },
+          ),
+        );
+      } catch (error) {
+        this.logger.warn(
+          `HyDE retrieval failed tenantId=${tenantId} errorType=${errorType(error)}`,
+        );
+      }
+    }
+
     const invalidInput = outcomes.find(
       (outcome) =>
         outcome.status === 'rejected' &&
@@ -191,7 +230,7 @@ export class RagService {
     const retrievalLatencyMs = Date.now() - retrievalStartedAt;
 
     this.logger.log(
-      `multi-query retrieval complete tenantId=${tenantId} queries=${queryExpansion.queries.length} ` +
+      `retrieval complete tenantId=${tenantId} strategy=${hydeResult ? 'hyde+multi-query-hybrid' : 'multi-query-hybrid'} queries=${queryExpansion.queries.length} ` +
         `queryGenerationFallback=${queryExpansion.usedFallback} successfulQueries=${successfulResultSets.length} ` +
         `candidateCount=${candidates.length} candidateTopK=${candidateTopK} ` +
         `queryGenerationLatencyMs=${queryGenerationLatencyMs} retrievalLatencyMs=${retrievalLatencyMs}`,
@@ -202,6 +241,11 @@ export class RagService {
       return {
         answer: 'I do not know based on the provided context.',
         sources: [],
+        retrieval: this.retrievalMetadata(
+          hydeEnabled,
+          hydeResult?.usedFallback,
+          hydeResult?.fallbackReason,
+        ),
       };
     }
 
@@ -247,6 +291,11 @@ export class RagService {
       return {
         answer: 'I do not know based on the provided context.',
         sources: [],
+        retrieval: this.retrievalMetadata(
+          hydeEnabled,
+          hydeResult?.usedFallback,
+          hydeResult?.fallbackReason,
+        ),
       };
     }
 
@@ -278,6 +327,25 @@ export class RagService {
     return {
       answer,
       sources: context.sources.map((source) => this.toSource(source)),
+      retrieval: this.retrievalMetadata(
+        hydeEnabled,
+        hydeResult?.usedFallback,
+        hydeResult?.fallbackReason,
+      ),
+    };
+  }
+
+  private retrievalMetadata(
+    hydeEnabled: boolean,
+    fallback?: boolean,
+    reason?: string,
+  ) {
+    return {
+      strategy: hydeEnabled ? 'hyde+multi-query-hybrid' : 'multi-query-hybrid',
+      hydeEnabled,
+      ...(hydeEnabled
+        ? { hydeFallback: fallback, hydeFallbackReason: reason }
+        : {}),
     };
   }
 

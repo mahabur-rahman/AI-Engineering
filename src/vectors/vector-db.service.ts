@@ -246,14 +246,47 @@ export class VectorDbService {
       throw new BadRequestException('minSimilarity must be between 0 and 1');
     }
 
+    const embeddingResult = await this.embeddingService.generateEmbedding({
+      text: query,
+    });
+    return this.semanticSearchByEmbedding(
+      embeddingResult.embedding,
+      tenantId,
+      topK,
+      minSimilarity,
+      filters,
+      query.length,
+    );
+  }
+
+  async semanticSearchByEmbedding(
+    queryEmbedding: number[],
+    tenantId: string,
+    topK: number = 5,
+    minSimilarity: number = 0,
+    filters: { sourceDocumentId?: string } = {},
+    queryLength = 0,
+  ): Promise<SearchResult[]> {
+    if (
+      !Array.isArray(queryEmbedding) ||
+      queryEmbedding.length !== 768 ||
+      !queryEmbedding.every(Number.isFinite)
+    ) {
+      throw new BadRequestException(
+        'Query embedding must contain 768 finite values',
+      );
+    }
+    if (topK <= 0 || topK > 100) {
+      throw new BadRequestException('topK must be between 1 and 100');
+    }
+    if (!tenantId?.trim()) {
+      throw new BadRequestException('Tenant ID cannot be empty');
+    }
+    if (minSimilarity < 0 || minSimilarity > 1) {
+      throw new BadRequestException('minSimilarity must be between 0 and 1');
+    }
+
     try {
-      // Step 1: Generate query embedding
-      const embeddingResult = await this.embeddingService.generateEmbedding({
-        text: query,
-      });
-
-      const queryEmbedding = embeddingResult.embedding;
-
       // Step 2: Search in database using cosine similarity
       // Formula: 1 - (distance) gives us similarity between 0-1
       // Order by similarity descending (highest first)
@@ -297,7 +330,7 @@ export class VectorDbService {
       }));
 
       this.logger.debug(
-        `search tenantId=${tenantId} queryLength=${query.length} topK=${topK} threshold=${minSimilarity} returned=${mapped.length} hits=${mapped
+        `search tenantId=${tenantId} queryLength=${queryLength} topK=${topK} threshold=${minSimilarity} returned=${mapped.length} hits=${mapped
           .map((r) => `${r.id}:${r.similarity.toFixed(3)}`)
           .join(',')}`,
       );

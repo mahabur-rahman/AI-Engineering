@@ -6,8 +6,9 @@ import { AiService } from '../ai.service';
 import { RagService } from './rag.service';
 import { HybridRetrievalService } from '../../retrieval/hybrid-retrieval.service';
 import type { HybridResult } from '../../retrieval/retrieval.types';
-import { Reranker } from '../reranking/reranker.types';
 import { MultiQueryService } from './multi-query.service';
+import { HyDEService } from './hyde.service';
+import { ConfigService } from '@nestjs/config';
 
 const hit = (overrides: Partial<HybridResult> = {}): HybridResult => ({
   chunkId: 'chunk-1',
@@ -24,22 +25,29 @@ const build = (
   search: jest.Mock,
   generate: jest.Mock = jest.fn(),
   rerank: jest.Mock = jest.fn().mockResolvedValue(new Map()),
-  generateQueries: jest.Mock = jest.fn(async (question: string) => ({
-    queries: [question],
-    usedFallback: false,
-  })),
+  generateQueries: jest.Mock = jest.fn((question: string) =>
+    Promise.resolve({ queries: [question], usedFallback: false }),
+  ),
+  createRetrievalEmbedding: jest.Mock = jest.fn(),
 ) => {
-  const retrieval = { search };
+  const retrieval = {
+    search,
+    searchWithEmbedding: jest.fn().mockResolvedValue([]),
+  };
   const aiService = { generate };
   const reranker = { rerank };
   const multiQuery = { generateQueries };
+  const hyde = { createRetrievalEmbedding };
+  const config = { get: jest.fn(() => undefined) };
   const service = new RagService(
     retrieval as unknown as HybridRetrievalService,
     aiService as unknown as AiService,
-    reranker as unknown as Reranker,
+    reranker,
     multiQuery as unknown as MultiQueryService,
+    hyde as unknown as HyDEService,
+    config as unknown as ConfigService,
   );
-  return { service, retrieval, aiService, reranker, multiQuery };
+  return { service, retrieval, aiService, reranker, multiQuery, hyde, config };
 };
 
 describe('RagService', () => {
@@ -117,6 +125,7 @@ describe('RagService', () => {
     ).resolves.toEqual({
       answer: 'I do not know based on the provided context.',
       sources: [],
+      retrieval: { strategy: 'multi-query-hybrid', hydeEnabled: false },
     });
     expect(reranker.rerank).not.toHaveBeenCalled();
     expect(aiService.generate).not.toHaveBeenCalled();
@@ -394,5 +403,69 @@ describe('RagService', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(reranker.rerank).not.toHaveBeenCalled();
     expect(aiService.generate).not.toHaveBeenCalled();
+  });
+
+  it('uses the HyDE vector with original keyword query, reranker query, and answer question', async () => {
+    const generated = hit({
+      chunkId: 'hyde-hit',
+      content: 'Real stored policy.',
+    });
+    const { service, retrieval, hyde, reranker, aiService } = build(
+      jest.fn().mockResolvedValue([]),
+      jest.fn().mockResolvedValue('Answer grounded in stored policy.'),
+      jest.fn().mockResolvedValue(new Map([['hyde-hit', 9]])),
+      jest.fn().mockResolvedValue({
+        queries: ['How are refunds processed?'],
+        usedFallback: false,
+      }),
+      jest.fn().mockResolvedValue({
+        embedding: Array(768).fill(0.1),
+        usedFallback: false,
+        generationModel: 'local-model',
+      }),
+    );
+    retrieval.searchWithEmbedding.mockResolvedValue([generated]);
+
+    const response = await service.ask({
+      question: 'How are refunds processed?',
+      tenantId: 'tenant-a',
+      useHyde: true,
+      queryCount: 1,
+    });
+
+    expect(retrieval.searchWithEmbedding).toHaveBeenCalledWith(
+      'How are refunds processed?',
+      'tenant-a',
+      Array(768).fill(0.1),
+      expect.objectContaining({ finalTopK: 20 }),
+    );
+    expect(hyde.createRetrievalEmbedding).toHaveBeenCalledWith(
+      'How are refunds processed?',
+    );
+    expect(reranker.rerank).toHaveBeenCalledWith(
+      'How are refunds processed?',
+      expect.any(Array),
+    );
+    const [answerPrompt] = aiService.generate.mock.calls[0] as [string];
+    expect(answerPrompt).toContain(
+      '<user_question>\nHow are refunds processed?',
+    );
+    expect(answerPrompt).toContain('Real stored policy.');
+    expect(answerPrompt).not.toContain('hypothetical document');
+    expect(response.retrieval).toMatchObject({
+      hydeEnabled: true,
+      hydeFallback: false,
+    });
+  });
+
+  it('keeps HyDE disabled by default and does not call its service', async () => {
+    const { service, hyde, retrieval } = build(jest.fn().mockResolvedValue([]));
+    const response = await service.ask({
+      question: 'Short query',
+      tenantId: 'tenant-a',
+    });
+    expect(hyde.createRetrievalEmbedding).not.toHaveBeenCalled();
+    expect(retrieval.search).toHaveBeenCalled();
+    expect(response.retrieval?.hydeEnabled).toBe(false);
   });
 });
