@@ -8,6 +8,7 @@ import { LlmRerankerService } from './reranking/llm-reranker.service';
 import { RagController } from './rag/rag.controller';
 import { RagService } from './rag/rag.service';
 import { MultiQueryService } from './rag/multi-query.service';
+import { HyDEService } from './rag/hyde.service';
 
 @Module({
   imports: [VectorModule, RetrievalModule],
@@ -15,6 +16,7 @@ import { MultiQueryService } from './rag/multi-query.service';
     AiService,
     RagService,
     MultiQueryService,
+    HyDEService,
     { provide: Reranker, useClass: LlmRerankerService },
   ],
   controllers: [AiController, RagController],

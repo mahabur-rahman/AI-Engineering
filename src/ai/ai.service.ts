@@ -43,6 +43,10 @@ export class AiService {
     this.model = this.configService.getOrThrow<string>('OLLAMA_MODEL');
   }
 
+  getModelName(): string {
+    return this.model;
+  }
+
   async generate(
     prompt: string,
     options: GenerateOptions = {},

@@ -29,8 +29,14 @@ export class HybridRetrievalService {
     const options = { ...DEFAULT_HYBRID_OPTIONS, ...defined };
 
     for (const key of ['vectorTopK', 'keywordTopK', 'finalTopK'] as const) {
-      if (!Number.isInteger(options[key]) || options[key] < 1 || options[key] > 100) {
-        throw new BadRequestException(`${key} must be an integer between 1 and 100`);
+      if (
+        !Number.isInteger(options[key]) ||
+        options[key] < 1 ||
+        options[key] > 100
+      ) {
+        throw new BadRequestException(
+          `${key} must be an integer between 1 and 100`,
+        );
       }
     }
     if (
@@ -38,9 +44,14 @@ export class HybridRetrievalService {
       options.similarityThreshold < 0 ||
       options.similarityThreshold > 1
     ) {
-      throw new BadRequestException('similarityThreshold must be between 0 and 1');
+      throw new BadRequestException(
+        'similarityThreshold must be between 0 and 1',
+      );
     }
-    if (!Number.isFinite(options.keywordMinScore) || options.keywordMinScore < 0) {
+    if (
+      !Number.isFinite(options.keywordMinScore) ||
+      options.keywordMinScore < 0
+    ) {
       throw new BadRequestException('keywordMinScore must be >= 0');
     }
     if (!Number.isFinite(options.rrfK) || options.rrfK < 1) {
@@ -54,7 +65,32 @@ export class HybridRetrievalService {
     tenantId: string,
     overrides: Partial<HybridOptions> = {},
   ): Promise<HybridResult[]> {
-    if (!query?.trim()) {
+    return this.searchInternal(query, query, tenantId, overrides);
+  }
+
+  async searchWithEmbedding(
+    keywordQuery: string,
+    tenantId: string,
+    queryEmbedding: number[],
+    overrides: Partial<HybridOptions> = {},
+  ): Promise<HybridResult[]> {
+    return this.searchInternal(
+      keywordQuery,
+      keywordQuery,
+      tenantId,
+      overrides,
+      queryEmbedding,
+    );
+  }
+
+  private async searchInternal(
+    vectorQuery: string,
+    keywordQuery: string,
+    tenantId: string,
+    overrides: Partial<HybridOptions>,
+    queryEmbedding?: number[],
+  ): Promise<HybridResult[]> {
+    if (!vectorQuery?.trim() || !keywordQuery?.trim()) {
       throw new BadRequestException('Query cannot be empty');
     }
     if (!tenantId?.trim()) {
@@ -63,15 +99,24 @@ export class HybridRetrievalService {
     const options = this.resolveOptions(overrides);
 
     const [vectorOutcome, keywordOutcome] = await Promise.allSettled([
-      this.vectorDb.semanticSearch(
-        query,
-        tenantId,
-        options.vectorTopK,
-        options.similarityThreshold,
-        options.filters,
-      ),
+      queryEmbedding
+        ? this.vectorDb.semanticSearchByEmbedding(
+            queryEmbedding,
+            tenantId,
+            options.vectorTopK,
+            options.similarityThreshold,
+            options.filters,
+            vectorQuery.length,
+          )
+        : this.vectorDb.semanticSearch(
+            vectorQuery,
+            tenantId,
+            options.vectorTopK,
+            options.similarityThreshold,
+            options.filters,
+          ),
       this.keywordRetrieval.search(
-        query,
+        keywordQuery,
         tenantId,
         options.keywordTopK,
         options.keywordMinScore,
@@ -81,12 +126,18 @@ export class HybridRetrievalService {
 
     // Invalid input is the caller's fault, not a retrieval outage: surface it.
     for (const outcome of [vectorOutcome, keywordOutcome]) {
-      if (outcome.status === 'rejected' && outcome.reason instanceof BadRequestException) {
+      if (
+        outcome.status === 'rejected' &&
+        outcome.reason instanceof BadRequestException
+      ) {
         throw outcome.reason;
       }
     }
 
-    if (vectorOutcome.status === 'rejected' && keywordOutcome.status === 'rejected') {
+    if (
+      vectorOutcome.status === 'rejected' &&
+      keywordOutcome.status === 'rejected'
+    ) {
       throw new Error(
         `Hybrid retrieval failed: vector=${errorMessage(vectorOutcome.reason)}; keyword=${errorMessage(keywordOutcome.reason)}`,
       );
@@ -98,12 +149,16 @@ export class HybridRetrievalService {
     if (vectorOutcome.status === 'fulfilled') {
       vectorResults = vectorOutcome.value;
     } else {
-      this.logger.warn(`vector retrieval failed, using keyword only: ${errorMessage(vectorOutcome.reason)}`);
+      this.logger.warn(
+        `vector retrieval failed, using keyword only: ${errorMessage(vectorOutcome.reason)}`,
+      );
     }
     if (keywordOutcome.status === 'fulfilled') {
       keywordResults = keywordOutcome.value;
     } else {
-      this.logger.warn(`keyword retrieval failed, using vector only: ${errorMessage(keywordOutcome.reason)}`);
+      this.logger.warn(
+        `keyword retrieval failed, using vector only: ${errorMessage(keywordOutcome.reason)}`,
+      );
     }
 
     const fused = reciprocalRankFusion(
@@ -114,11 +169,14 @@ export class HybridRetrievalService {
     );
 
     this.logger.log(
-      `hybrid tenantId=${tenantId} queryLength=${query.length} vectorTopK=${options.vectorTopK} keywordTopK=${options.keywordTopK} ` +
+      `hybrid tenantId=${tenantId} queryLength=${vectorQuery.length} keywordQueryLength=${keywordQuery.length} vectorTopK=${options.vectorTopK} keywordTopK=${options.keywordTopK} ` +
         `finalTopK=${options.finalTopK} threshold=${options.similarityThreshold} rrfK=${options.rrfK} ` +
         `vectorCount=${vectorResults.length} keywordCount=${keywordResults.length} finalCount=${fused.length} ` +
         `selected=${fused
-          .map((r) => `${r.chunkId}(v#${r.vectorRank ?? '-'},k#${r.keywordRank ?? '-'},f=${r.fusedScore.toFixed(4)})`)
+          .map(
+            (r) =>
+              `${r.chunkId}(v#${r.vectorRank ?? '-'},k#${r.keywordRank ?? '-'},f=${r.fusedScore.toFixed(4)})`,
+          )
           .join(',')}`,
     );
 

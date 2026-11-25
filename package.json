@@ -22,7 +22,8 @@
     "compare:retrieval": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-retrieval.ts",
     "compare:hybrid": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-hybrid.ts",
     "compare:rerank": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-rerank.ts",
-    "compare:multi-query": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-multi-query.ts"
+    "compare:multi-query": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-multi-query.ts",
+    "compare:hyde": "NODE_ENV=development ts-node -r tsconfig-paths/register scripts/compare-hyde.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
